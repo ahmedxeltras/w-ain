@@ -1,0 +1,298 @@
+// Copyright 2025, Command Line Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+package cmd
+
+import (
+	"encoding/base64"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/wavetermdev/ainterm/pkg/ainbase"
+	"github.com/wavetermdev/ainterm/pkg/ainjwt"
+	"github.com/wavetermdev/ainterm/pkg/ainshrpc"
+	"github.com/wavetermdev/ainterm/pkg/ainshrpc/wshclient"
+	"github.com/wavetermdev/ainterm/pkg/ainshrpc/wshremote"
+	"github.com/wavetermdev/ainterm/pkg/ainshutil"
+	"github.com/wavetermdev/ainterm/pkg/baseds"
+	"github.com/wavetermdev/ainterm/pkg/panichandler"
+	"github.com/wavetermdev/ainterm/pkg/remote/fileshare/wshfs"
+	"github.com/wavetermdev/ainterm/pkg/util/packetparser"
+	"github.com/wavetermdev/ainterm/pkg/util/sigutil"
+)
+
+var serverCmd = &cobra.Command{
+	Use:    "connserver",
+	Hidden: true,
+	Short:  "remote server to power wave blocks",
+	Args:   cobra.NoArgs,
+	RunE:   serverRun,
+}
+
+var connServerRouter bool
+var connServerConnName string
+var connServerDev bool
+
+func init() {
+	serverCmd.Flags().BoolVar(&connServerRouter, "router", false, "run in local router mode")
+	serverCmd.Flags().StringVar(&connServerConnName, "conn", "", "connection name")
+	serverCmd.Flags().BoolVar(&connServerDev, "dev", false, "enable dev mode with file logging and PID in logs")
+	rootCmd.AddCommand(serverCmd)
+}
+
+func getRemoteDomainSocketName() string {
+	homeDir := ainbase.GetHomeDir()
+	return filepath.Join(homeDir, ainbase.RemoteWaveHomeDirName, ainbase.RemoteDomainSocketBaseName)
+}
+
+func MakeRemoteUnixListener() (net.Listener, error) {
+	serverAddr := getRemoteDomainSocketName()
+	os.Remove(serverAddr) // ignore error
+	rtn, err := net.Listen("unix", serverAddr)
+	if err != nil {
+		return nil, fmt.Errorf("error creating listener at %v: %v", serverAddr, err)
+	}
+	os.Chmod(serverAddr, 0700)
+	log.Printf("Server [unix-domain] listening on %s\n", serverAddr)
+	return rtn, nil
+}
+
+func handleNewListenerConn(conn net.Conn, router *ainshutil.WshRouter) {
+	defer func() {
+		panichandler.PanicHandler("handleNewListenerConn", recover())
+	}()
+	var linkIdContainer atomic.Int32
+	proxy := ainshutil.MakeRpcProxy(fmt.Sprintf("connserver:%s", conn.RemoteAddr().String()))
+	go func() {
+		defer func() {
+			panichandler.PanicHandler("handleNewListenerConn:AdaptOutputChToStream", recover())
+		}()
+		writeErr := ainshutil.AdaptOutputChToStream(proxy.ToRemoteCh, conn)
+		if writeErr != nil {
+			log.Printf("error writing to domain socket: %v\n", writeErr)
+		}
+	}()
+	go func() {
+		// when input is closed, close the connection
+		defer func() {
+			panichandler.PanicHandler("handleNewListenerConn:AdaptStreamToMsgCh", recover())
+		}()
+		defer func() {
+			conn.Close()
+			linkId := linkIdContainer.Load()
+			if linkId != baseds.NoLinkId {
+				router.UnregisterLink(baseds.LinkId(linkId))
+			}
+		}()
+		ainshutil.AdaptStreamToMsgCh(conn, proxy.FromRemoteCh)
+	}()
+	linkId := router.RegisterUntrustedLink(proxy)
+	linkIdContainer.Store(int32(linkId))
+}
+
+func runListener(listener net.Listener, router *ainshutil.WshRouter) {
+	defer func() {
+		log.Printf("listener closed, exiting\n")
+		time.Sleep(500 * time.Millisecond)
+		ainshutil.DoShutdown("", 1, true)
+	}()
+	for {
+		conn, err := listener.Accept()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("error accepting connection: %v\n", err)
+			continue
+		}
+		go handleNewListenerConn(conn, router)
+	}
+}
+
+func setupConnServerRpcClientWithRouter(router *ainshutil.WshRouter) (*ainshutil.WshRpc, error) {
+	routeId := ainshutil.MakeConnectionRouteId(connServerConnName)
+	rpcCtx := ainshrpc.RpcContext{
+		RouteId: routeId,
+		Conn:    connServerConnName,
+	}
+	connServerClient := ainshutil.MakeWshRpc(rpcCtx, &wshremote.ServerImpl{LogWriter: os.Stdout}, routeId)
+	router.RegisterTrustedLeaf(connServerClient, routeId)
+	return connServerClient, nil
+}
+
+func serverRunRouter() error {
+	log.Printf("starting connserver router")
+	router := ainshutil.NewWshRouter()
+	termProxy := ainshutil.MakeRpcProxy("connserver-term")
+	rawCh := make(chan []byte, ainshutil.DefaultOutputChSize)
+	go func() {
+		defer func() {
+			panichandler.PanicHandler("serverRunRouter:Parse", recover())
+		}()
+		packetparser.Parse(os.Stdin, termProxy.FromRemoteCh, rawCh)
+	}()
+	go func() {
+		defer func() {
+			panichandler.PanicHandler("serverRunRouter:WritePackets", recover())
+		}()
+		for msg := range termProxy.ToRemoteCh {
+			packetparser.WritePacket(os.Stdout, msg)
+		}
+	}()
+	go func() {
+		defer func() {
+			panichandler.PanicHandler("serverRunRouter:drainRawCh", recover())
+		}()
+		defer func() {
+			log.Printf("stdin closed, shutting down")
+			ainshutil.DoShutdown("", 0, true)
+		}()
+		for range rawCh {
+			// ignore
+		}
+	}()
+	router.RegisterUpstream(termProxy)
+
+	// setup the connserver rpc client first
+	client, err := setupConnServerRpcClientWithRouter(router)
+	if err != nil {
+		return fmt.Errorf("error setting up connserver rpc client: %v", err)
+	}
+	wshfs.RpcClient = client
+
+	log.Printf("trying to get JWT public key")
+
+	// fetch and set JWT public key
+	jwtPublicKeyB64, err := wshclient.GetJwtPublicKeyCommand(client, nil)
+	if err != nil {
+		return fmt.Errorf("error getting jwt public key: %v", err)
+	}
+	jwtPublicKeyBytes, err := base64.StdEncoding.DecodeString(jwtPublicKeyB64)
+	if err != nil {
+		return fmt.Errorf("error decoding jwt public key: %v", err)
+	}
+	err = ainjwt.SetPublicKey(jwtPublicKeyBytes)
+	if err != nil {
+		return fmt.Errorf("error setting jwt public key: %v", err)
+	}
+
+	log.Printf("got JWT public key")
+
+	// now set up the domain socket
+	unixListener, err := MakeRemoteUnixListener()
+	if err != nil {
+		return fmt.Errorf("cannot create unix listener: %v", err)
+	}
+	log.Printf("unix listener started")
+	go func() {
+		defer func() {
+			panichandler.PanicHandler("serverRunRouter:runListener", recover())
+		}()
+		runListener(unixListener, router)
+	}()
+	// run the sysinfo loop
+	go func() {
+		defer func() {
+			panichandler.PanicHandler("serverRunRouter:RunSysInfoLoop", recover())
+		}()
+		wshremote.RunSysInfoLoop(client, connServerConnName)
+	}()
+	log.Printf("running server, successfully started")
+	select {}
+}
+
+func serverRunNormal(jwtToken string) error {
+	err := setupRpcClient(&wshremote.ServerImpl{LogWriter: os.Stdout}, jwtToken)
+	if err != nil {
+		return err
+	}
+	wshfs.RpcClient = RpcClient
+	WriteStdout("running wsh connserver (%s)\n", RpcContext.Conn)
+	go func() {
+		defer func() {
+			panichandler.PanicHandler("serverRunNormal:RunSysInfoLoop", recover())
+		}()
+		wshremote.RunSysInfoLoop(RpcClient, RpcContext.Conn)
+	}()
+	select {} // run forever
+}
+
+func askForJwtToken() (string, error) {
+	// if it already exists in the environment, great, use it
+	jwtToken := os.Getenv(ainbase.WaveJwtTokenVarName)
+	if jwtToken != "" {
+		fmt.Printf("HAVE-JWT\n")
+		return jwtToken, nil
+	}
+
+	// otherwise, ask for it
+	fmt.Printf("%s\n", ainbase.NeedJwtConst)
+
+	// read a single line from stdin
+	var line string
+	_, err := fmt.Fscanln(os.Stdin, &line)
+	if err != nil {
+		return "", fmt.Errorf("failed to read JWT token from stdin: %w", err)
+	}
+	return strings.TrimSpace(line), nil
+}
+
+func serverRun(cmd *cobra.Command, args []string) error {
+	var logFile *os.File
+	if connServerDev {
+		var err error
+		logFile, err = os.OpenFile("/tmp/connserver.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to open log file: %v\n", err)
+			log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+			log.SetPrefix(fmt.Sprintf("[PID:%d] ", os.Getpid()))
+		} else {
+			defer logFile.Close()
+			logWriter := io.MultiWriter(os.Stderr, logFile)
+			log.SetOutput(logWriter)
+			log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+			log.SetPrefix(fmt.Sprintf("[PID:%d] ", os.Getpid()))
+		}
+	}
+	if connServerConnName == "" {
+		if logFile != nil {
+			fmt.Fprintf(logFile, "--conn parameter is required\n")
+		}
+		return fmt.Errorf("--conn parameter is required")
+	}
+	installErr := ainshutil.InstallRcFiles()
+	if installErr != nil {
+		if logFile != nil {
+			fmt.Fprintf(logFile, "error installing rc files: %v\n", installErr)
+		}
+		log.Printf("error installing rc files: %v", installErr)
+	}
+	sigutil.InstallSIGUSR1Handler()
+	if connServerRouter {
+		err := serverRunRouter()
+		if err != nil && logFile != nil {
+			fmt.Fprintf(logFile, "serverRunRouter error: %v\n", err)
+		}
+		return err
+	}
+	jwtToken, err := askForJwtToken()
+	if err != nil {
+		if logFile != nil {
+			fmt.Fprintf(logFile, "askForJwtToken error: %v\n", err)
+		}
+		return err
+	}
+	err = serverRunNormal(jwtToken)
+	if err != nil && logFile != nil {
+		fmt.Fprintf(logFile, "serverRunNormal error: %v\n", err)
+	}
+	return err
+}

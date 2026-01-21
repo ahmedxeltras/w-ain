@@ -1,0 +1,238 @@
+package streamclient
+
+import (
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/wavetermdev/ainterm/pkg/ainshrpc"
+	"github.com/wavetermdev/ainterm/pkg/ainshrpc/wshclient"
+	"github.com/wavetermdev/ainterm/pkg/ainshutil"
+	"github.com/wavetermdev/ainterm/pkg/utilds"
+)
+
+type workItem struct {
+	workType string
+	ackPk    ainshrpc.CommandStreamAckData
+	dataPk   ainshrpc.CommandStreamData
+}
+
+type StreamRpcInterface interface {
+	StreamDataAckCommand(data ainshrpc.CommandStreamAckData, opts *ainshrpc.RpcOpts) error
+	StreamDataCommand(data ainshrpc.CommandStreamData, opts *ainshrpc.RpcOpts) error
+}
+
+type wshRpcAdapter struct {
+	rpc *ainshutil.WshRpc
+}
+
+func (a *wshRpcAdapter) StreamDataAckCommand(data ainshrpc.CommandStreamAckData, opts *ainshrpc.RpcOpts) error {
+	return wshclient.StreamDataAckCommand(a.rpc, data, opts)
+}
+
+func (a *wshRpcAdapter) StreamDataCommand(data ainshrpc.CommandStreamData, opts *ainshrpc.RpcOpts) error {
+	return wshclient.StreamDataCommand(a.rpc, data, opts)
+}
+
+func AdaptWshRpc(rpc *ainshutil.WshRpc) StreamRpcInterface {
+	return &wshRpcAdapter{rpc: rpc}
+}
+
+type Broker struct {
+	lock                sync.Mutex
+	rpcClient           StreamRpcInterface
+	streamIdCounter     int64
+	readers             map[int64]*Reader
+	writers             map[int64]*Writer
+	readerRoutes        map[int64]string
+	writerRoutes        map[int64]string
+	readerErrorSentTime map[int64]time.Time
+	sendQueue           *utilds.WorkQueue[workItem]
+	recvQueue           *utilds.WorkQueue[workItem]
+}
+
+func NewBroker(rpcClient StreamRpcInterface) *Broker {
+	b := &Broker{
+		rpcClient:           rpcClient,
+		streamIdCounter:     0,
+		readers:             make(map[int64]*Reader),
+		writers:             make(map[int64]*Writer),
+		readerRoutes:        make(map[int64]string),
+		writerRoutes:        make(map[int64]string),
+		readerErrorSentTime: make(map[int64]time.Time),
+	}
+	b.sendQueue = utilds.NewWorkQueue(b.processSendWork)
+	b.recvQueue = utilds.NewWorkQueue(b.processRecvWork)
+	return b
+}
+
+func (b *Broker) CreateStreamReader(readerRoute string, writerRoute string, rwnd int64) (*Reader, *ainshrpc.StreamMeta) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	b.streamIdCounter++
+	streamId := b.streamIdCounter
+
+	reader := NewReader(streamId, rwnd, b)
+	b.readers[streamId] = reader
+	b.readerRoutes[streamId] = readerRoute
+	b.writerRoutes[streamId] = writerRoute
+
+	meta := &ainshrpc.StreamMeta{
+		Id:            streamId,
+		RWnd:          rwnd,
+		ReaderRouteId: readerRoute,
+		WriterRouteId: writerRoute,
+	}
+
+	return reader, meta
+}
+
+func (b *Broker) AttachStreamWriter(meta *ainshrpc.StreamMeta) (*Writer, error) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	if _, exists := b.writers[meta.Id]; exists {
+		return nil, fmt.Errorf("writer already registered for stream id %d", meta.Id)
+	}
+
+	writer := NewWriter(meta.Id, meta.RWnd, b)
+	b.writers[meta.Id] = writer
+	b.readerRoutes[meta.Id] = meta.ReaderRouteId
+	b.writerRoutes[meta.Id] = meta.WriterRouteId
+
+	return writer, nil
+}
+
+func (b *Broker) SendAck(ackPk ainshrpc.CommandStreamAckData) {
+	b.sendQueue.Enqueue(workItem{workType: "sendack", ackPk: ackPk})
+}
+
+func (b *Broker) SendData(dataPk ainshrpc.CommandStreamData) {
+	b.sendQueue.Enqueue(workItem{workType: "senddata", dataPk: dataPk})
+}
+
+func (b *Broker) RecvData(dataPk ainshrpc.CommandStreamData) {
+	b.recvQueue.Enqueue(workItem{workType: "recvdata", dataPk: dataPk})
+}
+
+func (b *Broker) RecvAck(ackPk ainshrpc.CommandStreamAckData) {
+	b.recvQueue.Enqueue(workItem{workType: "recvack", ackPk: ackPk})
+}
+
+func (b *Broker) processSendWork(item workItem) {
+	switch item.workType {
+	case "sendack":
+		b.processSendAck(item.ackPk)
+	case "senddata":
+		b.processSendData(item.dataPk)
+	}
+}
+
+func (b *Broker) processRecvWork(item workItem) {
+	switch item.workType {
+	case "recvdata":
+		b.processRecvData(item.dataPk)
+	case "recvack":
+		b.processRecvAck(item.ackPk)
+	}
+}
+
+func (b *Broker) processSendAck(ackPk ainshrpc.CommandStreamAckData) {
+	b.lock.Lock()
+	route, ok := b.writerRoutes[ackPk.Id]
+	b.lock.Unlock()
+	if !ok {
+		return
+	}
+
+	opts := &ainshrpc.RpcOpts{
+		Route:      route,
+		NoResponse: true,
+	}
+	b.rpcClient.StreamDataAckCommand(ackPk, opts)
+
+	if ackPk.Fin || ackPk.Cancel {
+		b.cleanupReader(ackPk.Id)
+	}
+}
+
+func (b *Broker) processSendData(dataPk ainshrpc.CommandStreamData) {
+	b.lock.Lock()
+	route := b.readerRoutes[dataPk.Id]
+	b.lock.Unlock()
+
+	opts := &ainshrpc.RpcOpts{
+		Route:      route,
+		NoResponse: true,
+	}
+	b.rpcClient.StreamDataCommand(dataPk, opts)
+}
+
+func (b *Broker) processRecvData(dataPk ainshrpc.CommandStreamData) {
+	b.lock.Lock()
+	reader, ok := b.readers[dataPk.Id]
+	if !ok {
+		lastSent := b.readerErrorSentTime[dataPk.Id]
+		now := time.Now()
+		if now.Sub(lastSent) < time.Second {
+			b.lock.Unlock()
+			return
+		}
+		b.readerErrorSentTime[dataPk.Id] = now
+	}
+	b.lock.Unlock()
+
+	if !ok {
+		ackPk := ainshrpc.CommandStreamAckData{
+			Id:     dataPk.Id,
+			Seq:    dataPk.Seq,
+			Cancel: true,
+			Error:  "stream reader not found",
+		}
+		b.SendAck(ackPk)
+		return
+	}
+
+	reader.RecvData(dataPk)
+}
+
+func (b *Broker) processRecvAck(ackPk ainshrpc.CommandStreamAckData) {
+	b.lock.Lock()
+	writer, ok := b.writers[ackPk.Id]
+	b.lock.Unlock()
+
+	if !ok {
+		return
+	}
+
+	writer.RecvAck(ackPk)
+
+	if ackPk.Fin || ackPk.Cancel {
+		b.cleanupWriter(ackPk.Id)
+	}
+}
+
+func (b *Broker) Close() {
+	b.sendQueue.Close(false)
+	b.recvQueue.Close(false)
+	b.sendQueue.Wait()
+	b.recvQueue.Wait()
+}
+
+func (b *Broker) cleanupReader(streamId int64) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	delete(b.readers, streamId)
+	delete(b.readerRoutes, streamId)
+	delete(b.readerErrorSentTime, streamId)
+}
+
+func (b *Broker) cleanupWriter(streamId int64) {
+	b.lock.Lock()
+	defer b.lock.Unlock()
+
+	delete(b.writers, streamId)
+	delete(b.writerRoutes, streamId)
+}

@@ -1,0 +1,114 @@
+/* Copyright 2025, Command Line Inc.
+   SPDX-License-Identifier: Apache-2.0 */
+
+@import "tailwindcss";
+@source "../node_modules/streamdown/dist/index.js";
+
+@theme {
+    --color-background: rgb(34, 34, 34);
+    --color-foreground: #f7f7f7;
+    --color-white: #f7f7f7;
+    --color-primary: #f7f7f7;
+    --color-muted-foreground: rgb(195, 200, 194);
+    --color-secondary: rgb(195, 200, 194);
+    --color-muted: rgb(140, 145, 140);
+    --color-accent-50: #e3f2fd;
+    --color-accent-100: #bbdefb;
+    --color-accent-200: #90caf9;
+    --color-accent-300: #64b5f6;
+    --color-accent-400: #42a5f5; /* main accent color */
+    --color-accent-500: #3baff7;
+    --color-accent-600: #1e88e5;
+    --color-accent-700: #1976d2;
+    --color-accent-800: #1565c0;
+    --color-accent-900: #0d47a1;
+    --color-error: rgb(229, 77, 46);
+    --color-warning: rgb(224, 185, 86);
+    --color-success: #3baff7;
+    --color-panel: rgba(31, 33, 31, 0.5);
+    --color-hover: rgba(255, 255, 255, 0.1);
+    --color-border: rgba(255, 255, 255, 0.16);
+    --color-modalbg: #232323;
+    --color-accentbg: rgba(59, 175, 247, 0.5);
+    --color-hoverbg: rgba(255, 255, 255, 0.2);
+    --color-highlightbg: rgba(255, 255, 255, 0.2);
+    --color-accent: #3baff7;
+    --color-accenthover: #64b5f6;
+
+    --font-sans: "Inter", sans-serif;
+    --font-mono: "Hack", monospace;
+    --font-markdown:
+        -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji",
+        "Segoe UI Emoji";
+
+    --text-xxs: 10px;
+    --text-title: 18px;
+    --text-default: 14px;
+
+    --radius: 8px;
+
+    /* ANSI Colors (Default Dark Palette) */
+    --ansi-black: #757575;
+    --ansi-red: #cc685c;
+    --ansi-green: #3baff7;
+    --ansi-yellow: #cbca9b;
+    --ansi-blue: #85aacb;
+    --ansi-magenta: #cc72ca;
+    --ansi-cyan: #74a7cb;
+    --ansi-white: #c1c1c1;
+    --ansi-brightblack: #727272;
+    --ansi-brightred: #cc9d97;
+    --ansi-brightgreen: #3baff7;
+    --ansi-brightyellow: #cbcaaa;
+    --ansi-brightblue: #9ab6cb;
+    --ansi-brightmagenta: #cc8ecb;
+    --ansi-brightcyan: #b7b8cb;
+    --ansi-brightwhite: #f0f0f0;
+
+    --container-w600: 600px;
+    --container-w450: 450px;
+    --container-xs: 300px;
+    --container-xxs: 200px;
+    --container-tiny: 120px;
+
+    --z-window-drag: 100;
+}
+
+:root {
+    --zoomfactor: 1;
+    --zoomfactor-inv: 1;
+}
+
+/* Chart tooltip styling for sysinfo plots */
+svg [aria-label="tip"] g path {
+    color: var(--border-color);
+}
+
+/* Monaco editor scrollbar styling */
+.monaco-editor .slider {
+    background: rgba(255, 255, 255, 0.4);
+    border-radius: 4px;
+    transition: background 0.2s ease;
+}
+
+.monaco-editor .slider:hover {
+    background: rgba(255, 255, 255, 0.6);
+}
+
+.ellipsis {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@keyframes float-up {
+    0% {
+        transform: translate(-50%, 0);
+        opacity: 1;
+    }
+    100% {
+        transform: translate(-50%, -40px);
+        opacity: 0;
+    }
+}
