@@ -115,10 +115,17 @@ async function reinitAin() {
     await WOS.reloadWaveObject<Client>(WOS.makeORef("client", savedInitOpts.clientId));
     const waveWindow = await WOS.reloadWaveObject<WaveWindow>(WOS.makeORef("window", savedInitOpts.windowId));
     const ws = await WOS.reloadWaveObject<Workspace>(WOS.makeORef("workspace", waveWindow.workspaceid));
-    const initialTab = await WOS.reloadWaveObject<Tab>(WOS.makeORef("tab", savedInitOpts.tabId));
-    await WOS.reloadWaveObject<LayoutState>(WOS.makeORef("layout", initialTab.layoutstate));
+
+    // Only load tab-specific objects if we have a valid tabId
+    if (savedInitOpts.tabId && savedInitOpts.tabId !== "") {
+        const initialTab = await WOS.reloadWaveObject<Tab>(WOS.makeORef("tab", savedInitOpts.tabId));
+        await WOS.reloadWaveObject<LayoutState>(WOS.makeORef("layout", initialTab.layoutstate));
+        document.title = `Ain Term - ${initialTab.name}`; // TODO update with tab name change
+    } else {
+        document.title = `Ain Term`;
+    }
+
     reloadAllWorkspaceTabs(ws);
-    document.title = `Ain Term - ${initialTab.name}`; // TODO update with tab name change
     getApi().setWindowInitStatus("ain-ready");
     globalStore.set(atoms.reinitVersion, globalStore.get(atoms.reinitVersion) + 1);
     globalStore.set(atoms.updaterStatusAtom, getApi().getUpdaterStatus());
@@ -171,18 +178,24 @@ async function initAin(initOpts: AinInitOpts) {
 
     // ensures client/window/workspace are loaded into the cache before rendering
     try {
-        const [client, waveWindow, initialTab] = await Promise.all([
+        const [client, waveWindow] = await Promise.all([
             WOS.loadAndPinWaveObject<Client>(WOS.makeORef("client", initOpts.clientId)),
             WOS.loadAndPinWaveObject<WaveWindow>(WOS.makeORef("window", initOpts.windowId)),
-            WOS.loadAndPinWaveObject<Tab>(WOS.makeORef("tab", initOpts.tabId)),
         ]);
-        const [ws, layoutState] = await Promise.all([
-            WOS.loadAndPinWaveObject<Workspace>(WOS.makeORef("workspace", waveWindow.workspaceid)),
-            WOS.reloadWaveObject<LayoutState>(WOS.makeORef("layout", initialTab.layoutstate)),
-        ]);
+
+        const ws = await WOS.loadAndPinWaveObject<Workspace>(WOS.makeORef("workspace", waveWindow.workspaceid));
+
+        // Only load tab-specific objects if we have a valid tabId
+        if (initOpts.tabId && initOpts.tabId !== "") {
+            const initialTab = await WOS.loadAndPinWaveObject<Tab>(WOS.makeORef("tab", initOpts.tabId));
+            await WOS.reloadWaveObject<LayoutState>(WOS.makeORef("layout", initialTab.layoutstate));
+            document.title = `Ain Term - ${initialTab.name}`; // TODO update with tab name change
+        } else {
+            document.title = `Ain Term`;
+        }
+
         loadAllWorkspaceTabs(ws);
         WOS.wpsSubscribeToObject(WOS.makeORef("workspace", waveWindow.workspaceid));
-        document.title = `Ain Term - ${initialTab.name}`; // TODO update with tab name change
     } catch (e) {
         console.error("Failed initialization error", e);
         getApi().sendLog("Error in initialization (wave.ts, loading required objects) " + e.message + "\n" + e.stack);

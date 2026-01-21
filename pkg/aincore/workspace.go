@@ -306,17 +306,18 @@ func DeleteTab(ctx context.Context, workspaceId string, tabId string, recursive 
 	}
 
 	// if no tabs remaining, close window
-	if recursive && newActiveTabId == "" {
-		log.Printf("no tabs remaining in workspace %s, closing window\n", workspaceId)
-		windowId, err := ainstore.DBFindWindowForWorkspaceId(ctx, workspaceId)
-		if err != nil {
-			return newActiveTabId, fmt.Errorf("unable to find window for workspace id %v: %w", workspaceId, err)
-		}
-		err = CloseWindow(ctx, windowId, false)
-		if err != nil {
-			return newActiveTabId, err
-		}
-	}
+	// DISABLED: Keep window open and show logo instead
+	// if recursive && newActiveTabId == "" {
+	// 	log.Printf("no tabs remaining in workspace %s, closing window\n", workspaceId)
+	// 	windowId, err := ainstore.DBFindWindowForWorkspaceId(ctx, workspaceId)
+	// 	if err != nil {
+	// 		return newActiveTabId, fmt.Errorf("unable to find window for workspace id %v: %w", workspaceId, err)
+	// 	}
+	// 	err = CloseWindow(ctx, windowId, false)
+	// 	if err != nil {
+	// 		return newActiveTabId, err
+	// 	}
+	// }
 	return newActiveTabId, nil
 }
 
