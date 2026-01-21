@@ -237,10 +237,9 @@ electronApp.on("window-all-closed", () => {
     if (getGlobalIsRelaunching()) {
         return;
     }
-    // DISABLED: Keep app running even when all windows are closed
-    // if (unamePlatform !== "darwin") {
-    //     electronApp.quit();
-    // }
+    if (unamePlatform !== "darwin") {
+        electronApp.quit();
+    }
 });
 electronApp.on("before-quit", (e) => {
     setGlobalIsQuitting(true);
