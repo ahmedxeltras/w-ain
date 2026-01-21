@@ -3,7 +3,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { FakeBlock } from "./onboarding-layout";
-import waveLogo from "/logos/wave-logo.png";
+import waveLogo from "/logo cover.png";
 
 export type CommandRevealProps = {
     command: string;
