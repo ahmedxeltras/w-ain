@@ -78,7 +78,7 @@
         "@floating-ui/react": "^0.27.16",
         "@observablehq/plot": "^0.6.17",
         "@react-hook/resize-observer": "^2.0.2",
-        "@table-nav/core": "^0.0.7",
+        "@table-nav/core": "^0.0.8",
         "@table-nav/react": "^0.0.7",
         "@tanstack/react-table": "^8.21.3",
         "@xterm/addon-fit": "^0.10.0",
@@ -103,7 +103,7 @@
         "html-to-image": "^1.11.13",
         "immer": "^10.1.1",
         "jotai": "2.9.3",
-        "mermaid": "^11.12.1",
+        "mermaid": "^11.12.2",
         "monaco-editor": "^0.55.1",
         "monaco-yaml": "^5.4.0",
         "overlayscrollbars": "^2.12.0",
@@ -142,7 +142,7 @@
         "use-device-pixel-ratio": "^1.1.2",
         "winston": "^3.18.3",
         "ws": "^8.18.3",
-        "yaml": "^2.7.1"
+        "yaml": "^2.8.2"
     },
     "packageManager": "npm@10.9.2",
     "workspaces": [
