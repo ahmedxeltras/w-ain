@@ -23,7 +23,7 @@
         "app:ctrlvpaste": {
           "type": "boolean"
         },
-        "feature:AinAppbuilder": {
+        "feature:waveappbuilder": {
           "type": "boolean"
         },
         "ai:*": {
@@ -67,6 +67,12 @@
         },
         "ai:fixedfontsize": {
           "type": "number"
+        },
+        "waveai:showcloudmodes": {
+          "type": "boolean"
+        },
+        "waveai:defaultmode": {
+          "type": "string"
         },
         "ainai:showcloudmodes": {
           "type": "boolean"

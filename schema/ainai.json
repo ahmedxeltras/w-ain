@@ -81,6 +81,12 @@
           },
           "type": "array"
         },
+        "waveai:cloud": {
+          "type": "boolean"
+        },
+        "waveai:premium": {
+          "type": "boolean"
+        },
         "ainai:cloud": {
           "type": "boolean"
         },
