@@ -44,6 +44,7 @@ const config = {
         "dist/bin/**/*", // ainsrv and ainsh binaries
         "dist/schema/**/*", // schema files for Monaco editor
     ],
+    /*
     mac: {
         target: [
             {
@@ -58,7 +59,7 @@ const config = {
         category: "public.app-category.developer-tools",
         minimumSystemVersion: "10.15.0",
         mergeASARs: true,
-        singleArchFiles: "**/dist/bin/ainsrv.*",
+        singleArchFiles: "** /dist/bin/ainsrv.*",
         entitlements: "build/entitlements.mac.plist",
         entitlementsInherit: "build/entitlements.mac.plist",
         extendInfo: {
@@ -95,6 +96,7 @@ const config = {
     deb: {
         afterInstall: "build/deb-postinstall.tpl",
     },
+    */
     win: {
         target: ["nsis", "msi", "zip"],
         signtoolOptions: windowsShouldSign && {
@@ -104,6 +106,11 @@ const config = {
             certificateSha1: process.env.SM_CODE_SIGNING_CERT_SHA1_HASH,
         },
     },
+    msi: {
+        oneClick: true,
+        perMachine: true,
+    },
+    /*
     appImage: {
         license: "LICENSE",
     },
@@ -117,6 +124,7 @@ const config = {
         // this should remove /usr/lib/.build-id/ links which can conflict with other electron apps like slack
         fpm: ["--rpm-rpmbuild-define", "_build_id_links none"],
     },
+    */
     publish: {
         provider: "generic",
         url: "https://dl.ainterm.dev/releases-w2",

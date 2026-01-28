@@ -157,9 +157,9 @@ const (
 )
 
 const (
-	AIModeQuick    = "waveai@quick"
-	AIModeBalanced = "waveai@balanced"
-	AIModeDeep     = "waveai@deep"
+	AIModeQuick    = "ainai@quick"
+	AIModeBalanced = "ainai@balanced"
+	AIModeDeep     = "ainai@deep"
 )
 
 const (
