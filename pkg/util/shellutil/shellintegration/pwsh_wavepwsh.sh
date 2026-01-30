@@ -2,7 +2,7 @@
 $env:PATH = {{.WSHBINDIR_PWSH}} + "{{.PATHSEP}}" + $env:PATH
 
 # Source dynamic script from wsh token
-$waveterm_swaptoken_output = wsh token $env:WAVETERM_SWAPTOKEN pwsh 2>$null | Out-String
+$waveterm_swaptoken_output = ainsh token $env:WAVETERM_SWAPTOKEN pwsh 2>$null | Out-String
 if ($waveterm_swaptoken_output -and $waveterm_swaptoken_output -ne "") {
     Invoke-Expression $waveterm_swaptoken_output
 }
@@ -10,7 +10,7 @@ Remove-Variable -Name waveterm_swaptoken_output
 Remove-Item Env:WAVETERM_SWAPTOKEN -ErrorAction SilentlyContinue
 
 # Load Wave completions
-wsh completion powershell | Out-String | Invoke-Expression
+ainsh completion powershell | Out-String | Invoke-Expression
 
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     return  # skip OSC setup entirely
